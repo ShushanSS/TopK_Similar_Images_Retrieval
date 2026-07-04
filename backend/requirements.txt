@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+clip
+torch
+faiss-cpu
+pillow
+pandas
+numpy
