@@ -14,34 +14,45 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model_clip, preprocess = clip.load('ViT-B/32', device = device)
 
 class Embedder(nn.Module):
-  def __init__(self, embedding_dim = 512):
-    super().__init__()
-    weights = models.ResNet50_Weights.DEFAULT
-    backbone = models.resnet50(weights=weights)
-    backbone.fc = nn.Identity()  # removes classification head fc - final classifier
-    self.resnet = backbone
-    for param in self.resnet.parameters():
-      param.requires_grad = False
-    for param in self.resnet.layer3.parameters():
-      param.requires_grad = True
-    for param in self.resnet.layer4.parameters():
-      param.requires_grad = True
-    self.fc = nn.Linear(2048, embedding_dim)
+    def __init__(self, embedding_dim=512):
+        super().__init__()
+        weights = models.ResNet50_Weights.DEFAULT
+        backbone = models.resnet50(weights=weights)
+        backbone.fc = nn.Identity()
+        self.resnet = backbone
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+        for param in self.resnet.layer3.parameters():
+            param.requires_grad = True
+        for param in self.resnet.layer4.parameters():
+            param.requires_grad = True
+        self.fc = nn.Linear(2048, embedding_dim)
+        self._frozen_sections = [self.resnet.conv1, self.resnet.bn1, self.resnet.layer1, self.resnet.layer2]
 
-  def forward(self, x):
-    x = self.resnet(x)
-    x = x.view(x.size(0), -1)
-    x = self.fc(x)
-    x = torch.nn.functional.normalize(x, dim=-1)
-    return x
+    def forward(self, x):
+        x = self.resnet(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return torch.nn.functional.normalize(x, dim=-1)
+
+    def train(self, mode=True):
+        """requires_grad=False does not stop BatchNorm running stats from drifting --
+        that's controlled by .training, not requires_grad. Verified: without this
+        override, all 24 BN layers in the "frozen" sections drift anyway during training."""
+        super().train(mode)
+        if mode:
+            for section in self._frozen_sections:
+                for m in section.modules():
+                    if isinstance(m, nn.BatchNorm2d):
+                        m.eval()
+        return self
+
 model_6_epochs = Embedder()
 optimizer = torch.optim.Adam(model_6_epochs.parameters(), lr = 1e-4)
 
-checkpoint = torch.load('embedder_train_epoch_6.pt', map_location=device)
+checkpoint = torch.load('embedder_full_train_epoch_6.pt', map_location=device)
 model_6_epochs.load_state_dict(checkpoint['model'])
 model_6_epochs.to(device)
-
-optimizer.load_state_dict(checkpoint['optimizer'])
 model_6_epochs.eval()
 
 # def get_embedding(image_bytes: bytes) -> np.ndarray:
@@ -51,16 +62,16 @@ model_6_epochs.eval()
 #         embedding = model.encode_image(image)
 #         embedding /= embedding.norm(dim=-1, keepdim=True)
 #     return embedding.cpu().numpy().astype('float32')
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
+eval_transform = transforms.Compose([
+    transforms.Resize(232),
+    transforms.CenterCrop(224),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
-    ])
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
 def get_embedding(image_bytes: bytes) -> np.ndarray:
     model_6_epochs.eval()
     image = Image.open(BytesIO(image_bytes))
-    image = transform(image).unsqueeze(0).to(device)
+    image = eval_transform(image).unsqueeze(0).to(device)
     with torch.no_grad():
         embedding = model_6_epochs(image.to(device))
     return embedding.cpu().numpy().astype('float32')
