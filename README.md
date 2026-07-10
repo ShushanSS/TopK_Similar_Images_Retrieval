@@ -1,3 +1,9 @@
+# Similar Clothing Images Retrieval Project 
+
+## Dataset - https://www.kaggle.com/datasets/hserdaraltan/deepfashion-inshop-clothes-retrieval
+
+Fine-tuned a ResNet50 embedding model using triplet loss with batch-hard negative mining, implementing a custom category-aware PK sampler for structured batch construction — used for image-side embeddings. Text search runs on CLIP embeddings in the same shared space. Retrieval for both is served via a FAISS index.
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
